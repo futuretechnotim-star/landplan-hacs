@@ -3,7 +3,7 @@
   "name": "LandPlan",
   "codeowners": ["@futuretechnotim-star"],
   "config_flow": true,
-  "dependencies": ["frontend", "http"],
+  "dependencies": ["http"],
   "documentation": "https://github.com/futuretechnotim-star/landplan-hacs",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/futuretechnotim-star/landplan-hacs/issues",

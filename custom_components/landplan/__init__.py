@@ -4,7 +4,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import homeassistant.helpers.config_validation as cv
-from homeassistant.components.frontend import async_register_extra_urls
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -17,9 +16,13 @@ CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 _CARD_JS = "smartfarmview-snapshot-card.js"
 _CARD_URL = f"/landplan/{_CARD_JS}"
 
+# HA's frontend component reads this key when serving the Lovelace HTML page
+# and injects a <script type="module"> tag for each URL in the set.
+_FRONTEND_EXTRA_MODULE_URL = "frontend_extra_module_url"
+
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
-    """Register the card's JS file and add it as a Lovelace module."""
+    """Register the card's JS file and inject it into the Lovelace frontend."""
     await hass.http.async_register_static_paths(
         [
             StaticPathConfig(
@@ -29,8 +32,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
             )
         ]
     )
-    # Register via the frontend component's official API (requires "frontend" in dependencies).
-    async_register_extra_urls(hass, _CARD_URL)
+    hass.data.setdefault(_FRONTEND_EXTRA_MODULE_URL, set()).add(_CARD_URL)
     return True
 
 
