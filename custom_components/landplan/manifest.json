@@ -1,12 +1,12 @@
 {
   "domain": "landplan",
   "name": "LandPlan",
-  "version": "0.1.0",
-  "documentation": "https://github.com/futuretechnotim-star/landplan-hacs",
-  "issue_tracker": "https://github.com/futuretechnotim-star/landplan-hacs/issues",
   "codeowners": ["@futuretechnotim-star"],
-  "requirements": ["aiohttp>=3.9.0"],
+  "config_flow": true,
   "dependencies": ["http"],
+  "documentation": "https://github.com/futuretechnotim-star/landplan-hacs",
   "iot_class": "cloud_polling",
-  "config_flow": true
+  "issue_tracker": "https://github.com/futuretechnotim-star/landplan-hacs/issues",
+  "requirements": ["aiohttp>=3.9.0"],
+  "version": "0.1.0"
 }
