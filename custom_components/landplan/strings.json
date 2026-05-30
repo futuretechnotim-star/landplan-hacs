@@ -1,0 +1,38 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to LandPlan",
+        "description": "Generate an API token in the LandPlan web app: **Settings → API Tokens → Generate new token**. Paste it below.",
+        "data": {
+          "token": "API Token"
+        },
+        "data_description": {
+          "token": "Your LandPlan API token from Settings → API Tokens"
+        }
+      },
+      "plan": {
+        "title": "Select a plan",
+        "description": "Choose which LandPlan plan to surface in Home Assistant. Add the integration again to connect additional plans.",
+        "data": {
+          "plan_id": "Plan"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid API token — check Settings → API Tokens in LandPlan and try again.",
+      "cannot_connect": "Could not reach the LandPlan API. Check your network and try again.",
+      "unknown": "Unexpected error. Check the Home Assistant logs for details."
+    },
+    "abort": {
+      "already_configured": "This plan is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "LandPlan options"
+      }
+    }
+  }
+}

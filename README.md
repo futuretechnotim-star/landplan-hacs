@@ -34,10 +34,20 @@ Copy `custom_components/landplan/` into your HA `config/custom_components/` dire
 
 ## Setup
 
+### 1. Generate an API token in LandPlan
+
+1. Open [LandPlan.app](https://landplan.app) in a browser
+2. Go to **Settings → API Tokens**
+3. Click **Generate new token** and copy it
+
+### 2. Add the integration in Home Assistant
+
 1. Go to **Settings → Devices & Services → Add Integration**
 2. Search for **LandPlan**
-3. Enter your API token
+3. Paste your API token into the **API Token** field
 4. Select the plan you want to track
+
+Repeat from step 2 to connect additional plans — each plan gets its own config entry.
 
 Multiple config entries are supported — add one per plan to have separate dashboards.
 
