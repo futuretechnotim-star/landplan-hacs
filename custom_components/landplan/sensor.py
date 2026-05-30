@@ -1,0 +1,18 @@
+"""LandPlan sensor platform — task-count and status summary sensors per project.
+
+TODO: implement SensorEntity per project with activity count / status.
+"""
+from __future__ import annotations
+
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+
+
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    # Placeholder — no entities registered until SensorEntity is implemented.
+    pass
