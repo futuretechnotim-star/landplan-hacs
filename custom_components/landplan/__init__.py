@@ -1,10 +1,10 @@
 """LandPlan Home Assistant integration."""
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import homeassistant.helpers.config_validation as cv
-from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
@@ -14,26 +14,24 @@ from .coordinator import LandPlanCoordinator
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 _CARD_JS = "smartfarmview-snapshot-card.js"
-_CARD_URL = f"/landplan/{_CARD_JS}"
+
+# Standard HACS frontend path — physically present in www/community/ so it is
+# served reliably regardless of integration startup order.
+CARD_URL = f"/hacsfiles/landplan-hacs/{_CARD_JS}"
+
+
+def _install_card(src: Path, dest_dir: Path) -> None:
+    """Copy card JS into www/community/landplan-hacs/ (blocking, run in executor)."""
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dest_dir / _CARD_JS)
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
-    """Serve the bundled Lovelace card JS at a stable URL.
-
-    The card is not auto-registered as a Lovelace resource because HA has no
-    stable public API for that. Add it manually once:
-      Settings → Dashboards → Resources → /landplan/smartfarmview-snapshot-card.js
-      (type: JavaScript module)
-    """
-    await hass.http.async_register_static_paths(
-        [
-            StaticPathConfig(
-                _CARD_URL,
-                str(Path(__file__).parent / "www" / _CARD_JS),
-                cache_headers=True,
-            )
-        ]
-    )
+    """Copy the bundled card JS into www/community so it is served at the
+    standard /hacsfiles/landplan-hacs/ path used by all HACS frontend resources."""
+    src = Path(__file__).parent / "www" / _CARD_JS
+    dest_dir = Path(hass.config.config_dir) / "www" / "community" / "landplan-hacs"
+    await hass.async_add_executor_job(_install_card, src, dest_dir)
     return True
 
 
