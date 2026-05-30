@@ -62,7 +62,15 @@ All configuration is done via the UI config flow. No `configuration.yaml` change
 
 ## SmartFarmView Snapshot Card
 
-The integration bundles a Lovelace card for SecurityMesh field node cameras. It is loaded automatically — no manual resource registration needed.
+The integration bundles a Lovelace card for SecurityMesh field node cameras. The JS file is served at `/landplan/smartfarmview-snapshot-card.js` — register it once as a Lovelace resource and it will be available as a custom card on all dashboards.
+
+### Register the card resource (one-time setup)
+
+1. Go to **Settings → Dashboards → Resources**
+2. Click **Add Resource**
+3. URL: `/landplan/smartfarmview-snapshot-card.js`
+4. Resource type: **JavaScript module**
+5. Click **Create**, then hard-refresh your browser or app
 
 ```yaml
 type: custom:smartfarmview-snapshot-card

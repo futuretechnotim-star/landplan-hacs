@@ -16,13 +16,15 @@ CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 _CARD_JS = "smartfarmview-snapshot-card.js"
 _CARD_URL = f"/landplan/{_CARD_JS}"
 
-# HA's frontend component reads this key when serving the Lovelace HTML page
-# and injects a <script type="module"> tag for each URL in the set.
-_FRONTEND_EXTRA_MODULE_URL = "frontend_extra_module_url"
-
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
-    """Register the card's JS file and inject it into the Lovelace frontend."""
+    """Serve the bundled Lovelace card JS at a stable URL.
+
+    The card is not auto-registered as a Lovelace resource because HA has no
+    stable public API for that. Add it manually once:
+      Settings → Dashboards → Resources → /landplan/smartfarmview-snapshot-card.js
+      (type: JavaScript module)
+    """
     await hass.http.async_register_static_paths(
         [
             StaticPathConfig(
@@ -32,7 +34,6 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
             )
         ]
     )
-    hass.data.setdefault(_FRONTEND_EXTRA_MODULE_URL, set()).add(_CARD_URL)
     return True
 
 
