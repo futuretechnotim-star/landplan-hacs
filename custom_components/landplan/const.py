@@ -3,7 +3,7 @@ DOMAIN = "landplan"
 CONF_TOKEN = "token"
 CONF_PLAN_ID = "plan_id"
 
-PLATFORMS: list[str] = ["calendar", "sensor"]
+PLATFORMS: list[str] = ["calendar", "device_tracker", "image", "sensor"]
 
 # LandPlan tag values used to discover physical device map objects
 TAG_CAMERA_NODE = "camera-node"

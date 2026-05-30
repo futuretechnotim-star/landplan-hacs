@@ -104,3 +104,12 @@ class LandPlanApiClient:
     async def get_map_object(self, plan_id: str, object_id: str) -> dict[str, Any]:
         """Return a single map object with geometry metrics."""
         return await self._get(f"/plans/{plan_id}/objects/{object_id}", metrics="true")
+
+    # ------------------------------------------------------------------
+    # Photos
+    # ------------------------------------------------------------------
+
+    async def get_photo_download_url(self, plan_id: str, photo_id: str) -> str:
+        """Return a GCS signed URL for a photo (valid ~1 hour, no auth needed to fetch)."""
+        data = await self._get(f"/plans/{plan_id}/photos/{photo_id}/download-url")
+        return data["signedUrl"]
