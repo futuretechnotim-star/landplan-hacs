@@ -4,6 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import homeassistant.helpers.config_validation as cv
+from homeassistant.components.frontend import async_register_extra_urls
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -18,7 +19,7 @@ _CARD_URL = f"/landplan/{_CARD_JS}"
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
-    """Register the card's JS file as a static resource once at startup."""
+    """Register the card's JS file and add it as a Lovelace module."""
     await hass.http.async_register_static_paths(
         [
             StaticPathConfig(
@@ -28,8 +29,8 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
             )
         ]
     )
-    # Add the card as a Lovelace extra module so users don't need to add it manually.
-    hass.data.setdefault("frontend_extra_module_url", set()).add(_CARD_URL)
+    # Register via the frontend component's official API (requires "frontend" in dependencies).
+    async_register_extra_urls(hass, _CARD_URL)
     return True
 
 
