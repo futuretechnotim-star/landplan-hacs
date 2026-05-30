@@ -3,12 +3,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import homeassistant.helpers.config_validation as cv
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN, PLATFORMS
 from .coordinator import LandPlanCoordinator
+
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 _CARD_JS = "smartfarmview-snapshot-card.js"
 _CARD_URL = f"/landplan/{_CARD_JS}"
