@@ -15,22 +15,22 @@ CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 _CARD_JS = "smartfarmview-snapshot-card.js"
 
-# Standard HACS frontend path — physically present in www/community/ so it is
-# served reliably regardless of integration startup order.
-CARD_URL = f"/hacsfiles/landplan-hacs/{_CARD_JS}"
+# /local/ always maps to config/www/ in every HA installation — no HACS dependency.
+CARD_URL = f"/local/landplan/{_CARD_JS}"
 
 
 def _install_card(src: Path, dest_dir: Path) -> None:
-    """Copy card JS into www/community/landplan-hacs/ (blocking, run in executor)."""
+    """Copy card JS into www/landplan/ (blocking, run in executor)."""
     dest_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy2(src, dest_dir / _CARD_JS)
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
-    """Copy the bundled card JS into www/community so it is served at the
-    standard /hacsfiles/landplan-hacs/ path used by all HACS frontend resources."""
+    """Copy the bundled card JS into config/www/landplan/ so it is served at
+    /local/landplan/smartfarmview-snapshot-card.js — HA always serves /local/
+    from config/www/ with no startup-order dependency."""
     src = Path(__file__).parent / "www" / _CARD_JS
-    dest_dir = Path(hass.config.config_dir) / "www" / "community" / "landplan-hacs"
+    dest_dir = Path(hass.config.config_dir) / "www" / "landplan"
     await hass.async_add_executor_job(_install_card, src, dest_dir)
     return True
 

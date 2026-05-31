@@ -66,11 +66,11 @@ The integration bundles a Lovelace card for SecurityMesh field node cameras. The
 
 ### Register the card resource (one-time setup)
 
-The integration copies the card JS into `www/community/landplan-hacs/` on every startup, so it is available at the standard HACS frontend path immediately — no startup-order dependency.
+The integration copies the card JS into `config/www/landplan/` on every startup. HA always serves `/local/` from `config/www/` with no startup-order dependency and no reliance on HACS internals.
 
 1. Go to **Settings → Dashboards → Resources**
 2. Click **Add Resource**
-3. URL: `/hacsfiles/landplan-hacs/smartfarmview-snapshot-card.js`
+3. URL: `/local/landplan/smartfarmview-snapshot-card.js`
 4. Resource type: **JavaScript module**
 5. Click **Create**, then hard-refresh your browser or app
 
