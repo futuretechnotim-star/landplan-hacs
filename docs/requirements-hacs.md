@@ -1,8 +1,8 @@
 # LandPlan HACS Integration — Requirements
 
-**Status:** Draft / conceptual
-**Scope:** A Home Assistant custom integration (distributed via HACS) that surfaces LandPlan data, plus a kiosk-style Lovelace view that fuses LandPlan's authoritative data with near-real-time data from smartfarmview.com.
-**Last updated:** 2026-05-29
+**Status:** In progress
+**Scope:** A Home Assistant custom integration (distributed via HACS) that surfaces LandPlan data, plus a kiosk-style Lovelace view that fuses LandPlan's authoritative data with near-real-time data from the SmartFarmView field node mesh.
+**Last updated:** 2026-05-31
 
 ---
 
@@ -10,207 +10,200 @@
 
 The system is a three-tier split. Naming each tier by its job drives the rest of the design decisions.
 
-- **LandPlan.app — system of record.** Slow-moving, durable, authoritative. Owns the spatial model, object identity, plans, and the task/activity schedule. Long planning horizon.
-- **smartfarmview.com — real-time read model.** Fast, fused, partly ephemeral. Owns live camera feeds, drone/robot footage, Insta360 stills/video, and the navigable "poor man's Street View" experience. It *projects* LandPlan's truth and layers motion on top. Currently conceptual; public repo today focuses on mesh security cameras.
-- **HA integration + kiosk — consumer.** Pulls slow/authoritative data from LandPlan directly (e.g. today's task list via the same API the iOS app uses), and constantly-refreshed views from smartfarmview. Chooses the source per card.
+- **LandPlan.app — system of record.** Slow-moving, durable, authoritative. Owns the spatial model, object identity, plans, and the task/activity schedule. Long planning horizon. Physical field nodes (cameras, gateway, rover) are modeled as `field_node` map objects in LandPlan with GPS position, heading, and node metadata.
+- **Home Assistant — real-time gateway.** Raspberry Pi field nodes publish MQTT telemetry and JPEG snapshots to a local HA instance accessible on the user's Tailscale tailnet. HA exposes a REST API and camera proxy. It is the live data layer — it does not own the spatial model.
+- **HA integration + kiosk — consumer.** Reads slow/authoritative data from LandPlan (tasks, spatial model, node positions) and live data from HA (camera snapshots, battery sensors, rover device_tracker). Chooses the source per entity type.
 
-**Governing principle:** The integration is a *reader* of both sources, never the synchronizer. The "must stay in sync" relationship lives entirely between LandPlan and smartfarmview. This keeps HA dumb, resilient, and easy to fix.
+**Governing principle:** The HACS integration is a *reader* of both sources, never the synchronizer. LandPlan is authoritative for node identity and position. HA is authoritative for live state. This keeps HA dumb, resilient, and easy to fix.
 
-### 1.1 Object identity (the decision that governs everything)
+### 1.1 Object identity (governs the entity model)
 
-LandPlan map objects already have stable IDs (e.g. `cmpexjm31...`) and an `updatedAt` timestamp on every object. Rules:
+LandPlan map objects have stable IDs and an `updatedAt` on every object. The new `field_node` objectType stores a `nodePrefix` in its metadata (e.g. `"landplanmesh1"`). This prefix directly derives all HA entity IDs:
 
-- smartfarmview treats LandPlan IDs as **foreign keys, never forks**.
-- Physical devices (camera nodes, mesh nodes, robot dock) are modeled **once** as LandPlan map objects and carry LandPlan IDs.
-- smartfarmview attaches live streams to those IDs.
-- A kiosk marker is therefore identified the same way regardless of whether HA fetched it from LandPlan or smartfarmview. No reconciliation logic in the integration.
+```
+camera.{nodePrefix}_camera
+device_tracker.{nodePrefix}
+sensor.{nodePrefix}_battery_soc_pct
+sensor.{nodePrefix}_battery_voltage
+sensor.{nodePrefix}_battery_current
+sensor.{nodePrefix}_battery_runtime
+sensor.{nodePrefix}_power_mode
+sensor.{nodePrefix}_solar_net_current
+sensor.{nodePrefix}_solar_projected_eod_soc
+sensor.{nodePrefix}_cpu_temp
+sensor.{nodePrefix}_storage_pct
+button.{nodePrefix}_capture_snapshot
+```
 
-### 1.2 Sync direction and the "promotion" path
+The HACS integration reads `nodePrefix` from the LandPlan map object — **no manual options-flow entity binding is needed**. Node discovery is automatic once the user has added `field_node` objects to their plan in LandPlan.app.
 
-- **Primary flow:** LandPlan → smartfarmview, one-way, for the durable base model. Cheap delta poll or webhook keyed on `updatedAt`. Self-healing because LandPlan changes infrequently.
-- **Write-back (the only one):** Selected real-time captures may be **promoted** into LandPlan as durable objects — a kept Insta360 panorama becomes a `photo_point`; a saved robot route becomes a `generic_line`. Promotion is deliberate, never automatic. The constant stream otherwise stays in smartfarmview and never pollutes LandPlan.
+### 1.2 Node variants
 
-### 1.3 Reusing LandPlan object types for Street View
+LandPlan models three variants of `field_node`:
 
-The existing LandPlan model maps onto "poor man's Street View" with little or no schema change:
+| Variant | Tag | Position | Notes |
+|---|---|---|---|
+| `fixed` | `camera-node` | Static, set at placement | Standard camera node |
+| `gateway` | `gateway` | Static, set at placement | Gateway Pi with camera; distinct icon |
+| `rover` | `rover` | Dynamic — from `device_tracker.{nodePrefix}` | Moving node; dock position is fallback |
 
-- **`photo_point` + `photoHeading`** = a positioned, oriented image = a Street View node. Existing points already carry headings. Swap the flat photo for an Insta360 360° still and each point becomes a panorama anchor.
-- **`generic_line` walking paths** (ordered coords + `distanceM` + `durationS` + `walkingPathId`) = the traversable "streets." Existing recorded traversals already exist (e.g. "Old trail hike," "Insta360 test").
-- **Moving cams (robot, drone)** = ephemeral tracks that belong in smartfarmview's real-time layer, *not* durable LandPlan objects (optionally promoted to a saved line afterward).
+The HACS integration handles each variant differently. The rover uses the `device_tracker` HA entity for its live position; fixed and gateway nodes use the stored LandPlan GPS coordinate.
+
+### 1.3 Data flow
+
+```
+Raspberry Pi field node
+  │  publishes MQTT (retain=true) — snapshot, telemetry, detection, motion
+  ▼
+Home Assistant (on Tailscale)
+  │  REST API + camera proxy; entity names derived from nodePrefix
+  ▼
+HACS integration (slow coordinator: LandPlan; fast coordinator: HA entities)
+  │
+  ▼
+HA entities surfaced by the HACS integration
+```
+
+LandPlan.app proxies snapshot and telemetry through its own API (server-side, using a stored HA token). The HACS integration reads the same HA entities directly, since it runs inside HA and can call the HA WebSocket/REST API natively without Tailscale concerns.
 
 ---
 
 ## 2. Kiosk view: panels and data sources
 
-The kiosk is a **separate deliverable** from the integration (a Lovelace dashboard / custom map card). Each panel declares its source.
+The kiosk is a **separate deliverable** — a Lovelace dashboard using the SmartFarmView snapshot card (already built) plus standard HA cards.
 
-| Panel | LandPlan provides | smartfarmview / HA-native provides | Primary source |
+| Panel | LandPlan provides | HA provides | Primary source |
 |---|---|---|---|
-| Per-node camera + latest shot + minutes-since + battery % | Node position, label, documentation photo (`photoId` + `updatedAt`) | Live camera snapshot, battery sensor, live "minutes since" | smartfarmview (live) / LandPlan (doc photo fallback) |
-| Map + blinking most-recently-triggered mesh node + its capture | Where each mesh node sits | Trigger event (`last_triggered`), capture snapshot | smartfarmview |
-| Today's task list + status | Activities across plan's projects, filtered to today | — | **LandPlan-direct** |
-| Robot location + current view | Base map, dock/home position | `device_tracker` position + onboard camera | smartfarmview |
-
-**Note:** "Most recent shot + minutes since" is intentionally ambiguous and must be specified per panel — a *live* shot is an HA/smartfarmview camera snapshot; a LandPlan documentation photo uses the object's `updatedAt`.
+| Per-node camera + latest snapshot + age + battery % | Node position, label, `nodePrefix` | `camera.{nodePrefix}_camera` snapshot, `sensor.*_battery_soc_pct` | HA (live) |
+| Map + most-recently-triggered node + its capture | Node positions from `field_node` objects | `device_tracker.{nodePrefix}` for rover; sensor states | HA |
+| Today's task list + status | Activities across projects, filtered to today | — | **LandPlan-direct** |
+| Rover location + current view | Dock/home position | `device_tracker.{nodePrefix}` + `camera.{nodePrefix}_camera` | HA |
 
 ---
 
 ## 3. Integration requirements
 
-### 3.1 Authentication and plan selection (HA config flow)
+### 3.1 Authentication and plan selection (HA config flow) — DONE
 
-Two steps:
-
-1. **Auth.** *(Method must be confirmed against LandPlan API docs — see Open Questions.)* Two realistic options:
-   - **API token** pasted into the config flow (simpler to ship first).
-   - **OAuth2** via HA's `config_entry_oauth2_flow` helpers if LandPlan exposes a client.
-2. **Plan selection.** After auth, the flow calls the list-plans endpoint (no-args) and presents a dropdown. Current known plans on the test account:
-   - `Smart Forest, LLC` — `cmn1uj27z00023l906e4qpuok`
-   - `MacArthur Home` — `cmnai1oy80006imepbm1y51mr`
-   - `Maui Surf Shack` — `cmojgegfv0002tj5dhqyisu95`
-
-The chosen `planId` is saved on the config entry. **Multiple config entries must be supported** so each plan can be its own dashboard.
-
-**Stored on the entry:** the token (HA encrypts entry data at rest), the `planId`, and a device-mapping table (via options flow).
+- **Auth:** API token (Bearer). Validated via `GET /auth/me` on the LandPlan API.
+- **Plan selection:** list-plans dropdown, stored as `{token, planId}` on config entry.
+- **Multiple config entries** supported (one per plan).
+- See `config_flow.py` — complete.
 
 ### 3.2 Data refresh: two coordinators by cadence
 
-- **Slow LandPlan coordinator** (minutes): base spatial model, node positions, today's tasks. Proven against the live API.
-- **Fast smartfarmview coordinator** (seconds; ideally push — websocket/SSE rather than polling): live camera/battery/trigger state, robot position, fused overlays.
+- **Slow LandPlan coordinator (5 min) — DONE:** polls `get_plan`, `list_projects`, `list_all_activities`, `list_map_objects`. Returns `LandPlanData` with `device_nodes` property.
+- **Fast HA coordinator (future):** reads HA entities for live camera/battery/tracker state. Cadence: seconds, ideally WebSocket push. Not yet built. When built, it should use `nodePrefix` values extracted from `field_node` map objects returned by the slow coordinator.
 
-### 3.3 Node-mapping convention
+### 3.3 Node discovery — UPDATE NEEDED
 
-LandPlan map objects carry `tags` and `label`, and tags are already in active use (`cleanup`, `road`, `bridge`, `planned-building`). Extend this:
+**Current state:** The integration filters `map_objects` by `DEVICE_TAGS = {"camera-node", "mesh-node", "robot"}` in `coordinator.py` / `const.py`. The options flow was intended to manually bind each node to an HA entity.
 
-- Tag device objects `camera-node`, `mesh-node`, `robot`.
-- The integration filters map objects by those tags to discover nodes + coordinates.
-- An options flow binds each discovered node to a matching HA entity via entity selectors (auto-match where `label` == entity name).
-- This binding lets the kiosk draw a marker at the LandPlan coordinate and fill it with the live camera/battery/trigger.
+**Required change:** Now that LandPlan stores `nodePrefix` directly on `field_node` map objects, the manual binding options flow is no longer needed. The integration should:
 
-> **Note:** The Smart Forest plan currently has *no* map objects representing cameras, mesh nodes, or the robot (only photo points, ravines, roads, cleanup polygons, the property boundary, planned buildings). **Step zero is modeling the physical devices as tagged map objects.**
+1. Filter `map_objects` by `objectType == "field_node"` (in addition to or replacing tag-based filtering).
+2. Read `obj["metadata"]["fieldNode"]["nodePrefix"]` to derive all HA entity IDs automatically.
+3. Update `DEVICE_TAGS` to include `"gateway"` and `"rover"` — `"robot"` is retired.
+4. Remove or deprecate the manual node-mapping options flow.
 
-### 3.4 Module / file layout
+### 3.4 Module / file layout — CURRENT STATE
 
 ```
 custom_components/landplan/
-├── __init__.py            # setup, coordinator wiring
-├── manifest.json          # domain, version, codeowners, etc. (required keys)
-├── config_flow.py         # auth step + plan dropdown + options flow (node mapping)
-├── coordinator.py         # slow LandPlan DataUpdateCoordinator (plans→projects→activities→map_objects)
-├── api.py                 # thin client wrapper around LandPlan endpoints (isolate breakage)
-├── camera.py / image.py   # each photo-point's latest image + timestamp
-├── calendar.py            # project activities as a calendar (cleanest "today's tasks" feed)
-├── sensor.py              # task-count/status summary, per-project status, "minutes since last photo"
-├── device_tracker.py      # node/dock positions for map placement (or geo_location.py)
-└── const.py
-hacs.json                  # repo root
-README.md                  # repo root
-brand/icon.png             # brand assets
+├── __init__.py            # setup, card JS copy to www/landplan/
+├── manifest.json
+├── config_flow.py         # DONE — token auth + plan dropdown; options flow stub
+├── coordinator.py         # DONE — slow tier, LandPlanData, device_nodes
+├── api.py                 # DONE — all LandPlan endpoints + get_photo_download_url
+├── calendar.py            # DONE — one CalendarEntity per project
+├── sensor.py              # DONE — task count per project
+├── image.py               # DONE — one ImageEntity per photo_point with photoId
+├── device_tracker.py      # DONE — one TrackerEntity per device-tagged map object
+├── helpers.py             # DONE — remove_stale_entities()
+├── const.py               # DONE — DEVICE_TAGS needs gateway/rover update
+└── www/
+    └── smartfarmview-snapshot-card.js   # DONE — push + polling auto-refresh
+hacs.json                  # DONE
+README.md                  # DONE
+brand/icon.png             # DONE
 ```
-
-**Design caution — wrap the private API.** Hitting the same endpoints the iOS app uses means depending on a private API that can change without notice. Wrap it behind a thin `api.py` client so a breakage is a one-file fix, and prefer documented/MCP surfaces where they exist (tasks already work there).
-
-**Design caution — fallbacks.** Because smartfarmview is still conceptual, every smartfarmview-sourced panel must have a LandPlan-direct fallback or placeholder so the integration can ship now and light up real-time panels as the platform matures.
 
 ---
 
-## 4. HACS packaging requirements
+## 4. HACS packaging — DONE
 
-### 4.1 Repository structure (HACS is strict here)
-
-```
-custom_components/landplan/__init__.py
-custom_components/landplan/manifest.json
-custom_components/landplan/...
-hacs.json
-README.md
-```
-
-Hard rules:
-
-- **One integration per repository** — only one subdirectory under `custom_components/`. If more than one, only the first is managed.
-- All files required to run must live inside `custom_components/INTEGRATION_NAME/`.
-- Files in the repo root (or a named folder without the `custom_components/` parent) fail validation unless `content_in_root: true` is set in `hacs.json`.
-
-### 4.2 The two config files
-
-**`hacs.json`** (repo root) — minimum a `name` key. Example:
-
-```json
-{
-  "name": "LandPlan",
-  "render_readme": true,
-  "homeassistant": "2024.1.0"
-}
-```
-
-**`manifest.json`** (inside the integration dir) — must at least define: `domain`, `documentation`, `issue_tracker`, `codeowners`, `name`, `version`. Example:
-
-```json
-{
-  "domain": "landplan",
-  "name": "LandPlan",
-  "version": "0.1.0",
-  "documentation": "https://github.com/YOURUSER/landplan-hacs",
-  "issue_tracker": "https://github.com/YOURUSER/landplan-hacs/issues",
-  "codeowners": ["@YOURUSER"],
-  "requirements": [],
-  "iot_class": "cloud_polling",
-  "config_flow": true
-}
-```
-
-### 4.3 Other repository requirements
-
-- Repository must be **public** on GitHub.
-- Repository needs a **GitHub description** (displayed in HACS).
-- Provide **brand assets** — a `brand/` directory with at least `icon.png`.
-- A README explaining setup/usage.
-- Releases are **preferred but not strictly required**. If you publish releases, HACS shows the 5 latest plus the default branch; if not, it uses the default branch. A plain tag is **not** enough — publish full GitHub releases for version tracking.
+All HACS/hassfest validation passing. See `.github/workflows/validate.yml`.
 
 ---
 
-## 5. Steps to set up a test HACS package for LandPlan
+## 5. Remaining work
 
-These steps get a minimal, installable test integration running via the HACS **custom repository** route (no default-store approval needed).
+### 5.1 Update node discovery for `field_node` object type
 
-1. **Scaffold the repo.** Start from the official `custom-components/blueprint` template or the `cookiecutter-homeassistant-custom-component` generator. Rename the integration domain to `landplan`.
-2. **Create `manifest.json`** with the required keys (§4.2). Set `config_flow: true` and `iot_class: cloud_polling`.
-3. **Create `hacs.json`** at the repo root with at least `name` (§4.2).
-4. **Add a minimal `config_flow.py`** that:
-   - accepts an API token (start with token auth),
-   - calls the list-plans endpoint,
-   - presents the three plans as a dropdown,
-   - stores `{token, planId}` on the config entry.
-5. **Add a minimal `coordinator.py`** (slow tier) polling: plans → projects → activities. Validate against the Smart Forest plan ID `cmn1uj27z00023l906e4qpuok`.
-6. **Add one platform first** — `calendar.py` exposing today's activities — as the simplest end-to-end proof, since the task data is already reachable.
-7. **Add `brand/icon.png`** and a `README.md`.
-8. **Push to a public GitHub repo** with a description.
-9. **(Optional) Cut a `v0.1.0` GitHub release** for clean version tracking.
-10. **Install in HA via HACS:** HACS → three-dot menu → *Add custom repository* → paste repo URL → category *Integration* → install. Restart HA.
-11. **Add the integration:** Settings → Devices & Services → Add Integration → LandPlan → enter token → pick a plan.
-12. **Verify** the calendar entity populates with today's tasks; iterate by adding `sensor.py`, `camera.py`/`image.py`, and `device_tracker.py`.
-13. **Model device nodes** (step zero from §3.3): add tagged `camera-node` / `mesh-node` / `robot` map objects to the test plan so node-discovery and mapping can be exercised.
+**Files:** `const.py`, `coordinator.py`, `device_tracker.py`, `image.py`
 
-### 5.1 Local dev tips
+- Update `DEVICE_TAGS`: replace `"robot"` with `"gateway"` and `"rover"`.
+- Add `field_node` object detection: filter by `objectType == "field_node"` and extract `metadata.fieldNode.nodePrefix`.
+- `LandPlanData.device_nodes` should return `field_node` objects (in addition to tag-matched objects for backwards compatibility during transition).
+- `device_tracker.py`: for `nodeVariant == "rover"` objects, mark the entity as needing live position from HA `device_tracker.{nodePrefix}`. For fixed/gateway, use stored LandPlan coordinates as before.
 
-- Develop against a HA dev container or a throwaway HA instance; symlink `custom_components/landplan` for fast iteration before testing the full HACS install path.
-- Validate the repo with the HACS Action and `hassfest` early — both are required for any future default-store submission.
-- Keep all LandPlan HTTP calls inside `api.py` so private-endpoint changes are contained.
+### 5.2 Fast HA coordinator (live camera + battery + rover position)
+
+**New file:** `ha_coordinator.py` — a second `DataUpdateCoordinator` that reads HA entities directly. This is distinct from the LandPlan coordinator because it needs a much faster update cadence and a different data source.
+
+Inputs: `nodePrefix` values from `field_node` objects in `LandPlanData`.
+
+Entities to fetch per node:
+- `camera.{nodePrefix}_camera` state (for `last_updated` / image freshness)
+- `sensor.{nodePrefix}_battery_soc_pct` → battery gauge sensor
+- `sensor.{nodePrefix}_power_mode` → power mode sensor
+- `sensor.{nodePrefix}_solar_net_current` → solar sensor
+- `device_tracker.{nodePrefix}` → rover live position
+
+Data access: use HA's `homeassistant.helpers.entity_registry` and state machine directly (no HTTP round-trip needed — the data is already in HA memory).
+
+### 5.3 Battery and power mode sensors from HA
+
+**New file:** `sensor.py` additions (or separate `ha_sensor.py`)
+
+New sensor entities sourced from HA (not LandPlan):
+- Battery SoC % per `field_node` — from `sensor.{nodePrefix}_battery_soc_pct`
+- Power mode per `field_node` — from `sensor.{nodePrefix}_power_mode`
+- Solar net current — from `sensor.{nodePrefix}_solar_net_current`
+
+These complement the existing LandPlan-sourced task-count sensors.
+
+### 5.4 Kiosk Lovelace dashboard
+
+A `lovelace/` directory with a starter dashboard YAML for the kiosk view. Not a Python platform — a configuration deliverable. Includes:
+
+- SmartFarmView snapshot card per node (one card per `field_node` in the plan)
+- Battery gauge and power mode per node
+- Today's task list via the LandPlan calendar entity
+- Rover map card if a rover node exists
+
+### 5.5 Options flow update
+
+The node-mapping options flow (currently a stub) should be updated to reflect the new automatic binding. Instead of manual entity assignment, it should allow:
+- Confirming / overriding the detected `nodePrefix` per node
+- Setting polling cadence for the fast coordinator
+- Enabling/disabling specific sensor types
 
 ---
 
-## 6. Open questions
+## 6. Resolved questions (previously open)
 
-1. **LandPlan auth method.** Token vs. OAuth2 — what does the public/iOS API actually use, and is there a documented client? Determines §3.1.
-2. **Private vs. documented API surface.** Which endpoints are stable/documented vs. iOS-app-private? Tasks work via the documented/MCP surface; what else does?
-3. **smartfarmview real-time transport.** Websocket, SSE, or polling? Determines the fast coordinator design (§3.2).
-4. **Sync mechanism LandPlan → smartfarmview.** Delta poll on `updatedAt` vs. webhooks. What can LandPlan emit?
-5. **"Minutes since photo" semantics per panel.** Live snapshot age vs. LandPlan `updatedAt` — which applies where?
-6. **Device node modeling.** Final tag vocabulary (`camera-node`/`mesh-node`/`robot`) and whether device metadata lives in the map object `metadata` field.
-7. **Promotion workflow.** Who triggers promotion of a real-time capture into a durable LandPlan object, and through which write API?
-8. **Multi-plan kiosk.** One dashboard per plan (per config entry) vs. a combined view across Smart Forest / MacArthur / Maui.
-9. **Moving-cam representation in HA.** `device_tracker` vs. `geo_location` for robot/drone, and how the kiosk renders a moving marker + live feed.
-10. **Default-store ambitions.** Is eventual submission to the HACS default store a goal (stricter validation, brand PR), or is custom-repository distribution sufficient?
-11. **smartfarmview repo internals.** The current repo wasn't reachable via search; confirm its existing structure, language, and API shape before designing the fast coordinator's contract.
-12. **Rate limits / quotas** on the LandPlan API for polling cadence.
+1. **Auth method** — API token (Bearer). Confirmed and implemented.
+2. **Private vs. documented API surface** — tasks/activities/map-objects work via the MCP-documented surface. New `field_node` endpoints (`/ha/nodes`, `/field-node/snapshot`, `/field-node/telemetry`) are being added to LandPlan.
+3. **Device node modeling** — `field_node` objectType with `nodeVariant` and `nodePrefix` in metadata. Tags: `camera-node`, `gateway`, `rover`. `robot` retired.
+4. **Moving-cam representation** — `device_tracker.{nodePrefix}` for rover confirmed. Fixed/gateway use stored LandPlan coordinates.
+5. **smartfarmview real-time transport** — HA is the real-time layer. HACS reads HA state directly (no smartfarmview.com dependency for field node features).
+6. **"Minutes since photo" semantics** — `last_updated` on the HA camera entity state. Implemented in SmartFarmView snapshot card.
+
+## 7. Still open
+
+1. **Fast coordinator push vs. poll** — HA state machine is in-process; prefer HA event bus subscription (`EVENT_STATE_CHANGED`) over polling. Confirm whether `DataUpdateCoordinator` or direct event bus subscription is better for per-entity HA state.
+2. **Multi-plan kiosk** — one dashboard per plan config entry vs. combined view.
+3. **Default-store ambitions** — custom-repository distribution is sufficient for now.
+4. **Rate limits** on LandPlan API for the slow coordinator.
+5. **Rover live position update cadence** — how frequently to read `device_tracker.{nodePrefix}`. 5 s when map view is open; what when backgrounded?
