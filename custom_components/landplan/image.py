@@ -19,6 +19,7 @@ import homeassistant.util.dt as dt_util
 
 from .const import DOMAIN
 from .coordinator import LandPlanCoordinator
+from .helpers import remove_stale_entities
 
 
 async def async_setup_entry(
@@ -27,11 +28,13 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator: LandPlanCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities(
+    entities = [
         LandPlanPhotoImage(coordinator, obj)
         for obj in coordinator.data.map_objects
         if obj.get("objectType") == "photo_point" and obj.get("photoId")
-    )
+    ]
+    remove_stale_entities(hass, entry, "image", {e.unique_id for e in entities})
+    async_add_entities(entities)
 
 
 class LandPlanPhotoImage(CoordinatorEntity[LandPlanCoordinator], ImageEntity):

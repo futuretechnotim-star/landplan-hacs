@@ -11,6 +11,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .coordinator import LandPlanCoordinator
+from .helpers import remove_stale_entities
 
 
 async def async_setup_entry(
@@ -19,10 +20,12 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator: LandPlanCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities(
+    entities = [
         LandPlanTaskCountSensor(coordinator, project)
         for project in coordinator.data.projects
-    )
+    ]
+    remove_stale_entities(hass, entry, "sensor", {e.unique_id for e in entities})
+    async_add_entities(entities)
 
 
 class LandPlanTaskCountSensor(CoordinatorEntity[LandPlanCoordinator], SensorEntity):

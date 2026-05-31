@@ -16,6 +16,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .coordinator import LandPlanCoordinator
+from .helpers import remove_stale_entities
 
 
 async def async_setup_entry(
@@ -24,10 +25,12 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator: LandPlanCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities(
+    entities = [
         LandPlanNodeTracker(coordinator, obj)
         for obj in coordinator.data.device_nodes
-    )
+    ]
+    remove_stale_entities(hass, entry, "device_tracker", {e.unique_id for e in entities})
+    async_add_entities(entities)
 
 
 class LandPlanNodeTracker(CoordinatorEntity[LandPlanCoordinator], TrackerEntity):
