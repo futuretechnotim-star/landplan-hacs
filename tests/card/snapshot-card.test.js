@@ -26,11 +26,8 @@ function makeCard(config = {}) {
   return card;
 }
 
-function makeHass(entityAttrs = {}) {
-  const defaults = {
-    access_token: "tok123",
-    ...entityAttrs,
-  };
+function makeHass(entityAttrs = {}, connectionOverride = {}) {
+  const defaults = { access_token: "tok123", ...entityAttrs };
   return {
     states: {
       "camera.node1": {
@@ -39,6 +36,10 @@ function makeHass(entityAttrs = {}) {
       },
     },
     callService: jest.fn().mockResolvedValue(undefined),
+    connection: {
+      subscribeEvents: jest.fn().mockResolvedValue(jest.fn()),
+      ...connectionOverride,
+    },
   };
 }
 
@@ -65,14 +66,23 @@ describe("setConfig", () => {
     card.setConfig({ camera_entity: "camera.node1", button_entity: "button.node1_capture" });
     expect(card.shadowRoot.getElementById("image-wrap")).toBe(wrap);
   });
+
+  test("defaults refresh_interval to 10 when not specified", () => {
+    const card = makeCard();
+    expect(card._config.refresh_interval).toBe(10);
+  });
+
+  test("respects explicit refresh_interval config", () => {
+    const card = makeCard({ refresh_interval: 30 });
+    expect(card._config.refresh_interval).toBe(30);
+  });
 });
 
 describe("image rendering", () => {
   test("shows placeholder when hass has no access_token", () => {
     const card = makeCard();
     card.hass = makeHass({ access_token: undefined });
-    const placeholder = card.shadowRoot.getElementById("placeholder");
-    expect(placeholder.style.display).not.toBe("none");
+    expect(card.shadowRoot.getElementById("placeholder").style.display).not.toBe("none");
   });
 
   test("renders img element when access_token is present", () => {
@@ -84,13 +94,12 @@ describe("image rendering", () => {
     expect(img.src).toContain("tok123");
   });
 
-  test("cache-busts src using entity last_updated", () => {
+  test("cache-busts src using entity last_updated on initial render", () => {
     const card = makeCard();
     const hass = makeHass();
     card.hass = hass;
-    const img = card.shadowRoot.querySelector("img");
     const expected = String(new Date(hass.states["camera.node1"].last_updated).getTime());
-    expect(img.src).toContain(`_t=${expected}`);
+    expect(card.shadowRoot.querySelector("img").src).toContain(`_t=${expected}`);
   });
 
   test("does not re-set img src if last_updated has not changed", () => {
@@ -100,9 +109,119 @@ describe("image rendering", () => {
     hass.states["camera.node1"].last_updated = fixedTime;
     card.hass = hass;
     const firstSrc = card.shadowRoot.querySelector("img").src;
-    hass.states["camera.node1"].last_updated = fixedTime; // unchanged
+    hass.states["camera.node1"].last_updated = fixedTime;
     card.hass = hass;
     expect(card.shadowRoot.querySelector("img").src).toBe(firstSrc);
+  });
+});
+
+describe("push refresh via WebSocket subscription", () => {
+  test("subscribes to state_changed on first hass assignment", () => {
+    const card = makeCard();
+    const hass = makeHass();
+    card.hass = hass;
+    expect(hass.connection.subscribeEvents).toHaveBeenCalledWith(
+      expect.any(Function),
+      "state_changed"
+    );
+  });
+
+  test("does not re-subscribe on subsequent hass assignments", () => {
+    const card = makeCard();
+    const hass = makeHass();
+    card.hass = hass;
+    card.hass = hass;
+    expect(hass.connection.subscribeEvents).toHaveBeenCalledTimes(1);
+  });
+
+  test("refreshImage is called when state_changed fires for camera entity", async () => {
+    const card = makeCard();
+    let capturedHandler;
+    const hass = makeHass({}, {
+      subscribeEvents: jest.fn((handler) => {
+        capturedHandler = handler;
+        return Promise.resolve(jest.fn());
+      }),
+    });
+    card.hass = hass;
+    await Promise.resolve(); // flush subscription promise
+
+    const refreshSpy = jest.spyOn(card, "_refreshImage");
+    capturedHandler({ data: { entity_id: "camera.node1" } });
+    expect(refreshSpy).toHaveBeenCalled();
+  });
+
+  test("ignores state_changed events for other entities", async () => {
+    const card = makeCard();
+    let capturedHandler;
+    const hass = makeHass({}, {
+      subscribeEvents: jest.fn((handler) => {
+        capturedHandler = handler;
+        return Promise.resolve(jest.fn());
+      }),
+    });
+    card.hass = hass;
+    await Promise.resolve();
+
+    const refreshSpy = jest.spyOn(card, "_refreshImage");
+    capturedHandler({ data: { entity_id: "sensor.something_else" } });
+    expect(refreshSpy).not.toHaveBeenCalled();
+  });
+
+  test("unsubscribes on disconnectedCallback", async () => {
+    const unsub = jest.fn();
+    const card = makeCard();
+    const hass = makeHass({}, {
+      subscribeEvents: jest.fn().mockResolvedValue(unsub),
+    });
+    card.hass = hass;
+    await Promise.resolve();
+    card.disconnectedCallback();
+    expect(unsub).toHaveBeenCalled();
+  });
+
+  test("does not throw if subscribeEvents rejects", async () => {
+    const card = makeCard();
+    const hass = makeHass({}, {
+      subscribeEvents: jest.fn().mockRejectedValue(new Error("ws error")),
+    });
+    await expect(async () => {
+      card.hass = hass;
+      await Promise.resolve();
+    }).not.toThrow();
+  });
+});
+
+describe("polling fallback", () => {
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => jest.useRealTimers());
+
+  test("sets up refresh interval when refresh_interval > 0", () => {
+    const card = makeCard({ refresh_interval: 10 });
+    card.hass = makeHass();
+    card.connectedCallback();
+    const refreshSpy = jest.spyOn(card, "_refreshImage");
+    jest.advanceTimersByTime(10_000);
+    expect(refreshSpy).toHaveBeenCalled();
+  });
+
+  test("does not set up refresh interval when refresh_interval is 0", () => {
+    const card = makeCard({ refresh_interval: 0 });
+    card.hass = makeHass();
+    card.connectedCallback();
+    const refreshSpy = jest.spyOn(card, "_refreshImage");
+    jest.advanceTimersByTime(60_000);
+    expect(refreshSpy).not.toHaveBeenCalled();
+  });
+
+  test("clears interval on disconnectedCallback", () => {
+    const card = makeCard({ refresh_interval: 10 });
+    card.hass = makeHass();
+    card.connectedCallback();
+    card.disconnectedCallback();
+    const refreshSpy = jest.spyOn(card, "_refreshImage");
+    jest.advanceTimersByTime(30_000);
+    expect(refreshSpy).not.toHaveBeenCalled();
   });
 });
 
@@ -133,7 +252,7 @@ describe("age display", () => {
 
   test("shows dash when entity is absent", () => {
     const card = makeCard();
-    card.hass = { states: {}, callService: jest.fn() };
+    card.hass = { states: {}, callService: jest.fn(), connection: { subscribeEvents: jest.fn().mockResolvedValue(jest.fn()) } };
     expect(card.shadowRoot.getElementById("age").textContent).toBe("–");
   });
 });
@@ -144,13 +263,13 @@ describe("capture button", () => {
     const hass = makeHass();
     card.hass = hass;
     card.shadowRoot.getElementById("capture-btn").click();
-    await Promise.resolve(); // flush microtask
+    await Promise.resolve();
     expect(hass.callService).toHaveBeenCalledWith("button", "press", {
       entity_id: "button.node1_capture",
     });
   });
 
-  test("disables button during capture", async () => {
+  test("disables button during capture", () => {
     const card = makeCard();
     card.hass = makeHass();
     const btn = card.shadowRoot.getElementById("capture-btn");

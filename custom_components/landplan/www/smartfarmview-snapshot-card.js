@@ -1,3 +1,23 @@
+/**
+ * SmartFarmView Snapshot Card
+ *
+ * Keeps the image current via two independent mechanisms:
+ *
+ * 1. WebSocket push  — subscribes to state_changed events for the camera
+ *    entity. Fires immediately whenever HA receives a new MQTT image, with
+ *    no polling delay. This is the primary update path.
+ *
+ * 2. Polling fallback — a configurable interval (default 10 s) that forces
+ *    a fresh fetch regardless of entity state. Guards against connection
+ *    hiccups or cases where state_changed doesn't fire. Set
+ *    refresh_interval: 0 to rely on push only.
+ *
+ * Config options:
+ *   camera_entity    (required) HA MQTT camera entity
+ *   button_entity    (required) HA button entity that triggers capture
+ *   title            (optional) card header text
+ *   refresh_interval (optional) polling interval in seconds, default 10, 0 = push only
+ */
 class SmartFarmViewSnapshotCard extends HTMLElement {
   constructor() {
     super();
@@ -5,20 +25,27 @@ class SmartFarmViewSnapshotCard extends HTMLElement {
     this._hass = null;
     this._config = null;
     this._rendered = false;
-    this._intervalId = null;
+    this._ageIntervalId = null;
+    this._refreshIntervalId = null;
+    this._unsubscribeCamera = null;
+    this._firstHass = true;
   }
 
   static getStubConfig() {
     return {
       camera_entity: "camera.landplanmesh1_camera",
       button_entity: "button.landplanmesh1_capture_snapshot",
+      refresh_interval: 10,
     };
   }
 
   setConfig(config) {
     if (!config.camera_entity) throw new Error("camera_entity is required");
     if (!config.button_entity) throw new Error("button_entity is required");
-    this._config = config;
+    this._config = {
+      refresh_interval: 10,
+      ...config,
+    };
     if (!this._rendered) {
       this._render();
       this._rendered = true;
@@ -27,17 +54,49 @@ class SmartFarmViewSnapshotCard extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
-    this._updateImage();
     this._updateAge();
+    // On first hass assignment, subscribe to camera state_changed events (push path).
+    if (this._firstHass) {
+      this._firstHass = false;
+      this._subscribeCamera();
+      this._updateImage(); // initial render
+    }
   }
 
   connectedCallback() {
-    this._intervalId = setInterval(() => this._updateAge(), 30_000);
+    this._ageIntervalId = setInterval(() => this._updateAge(), 30_000);
+    const interval = Number(this._config?.refresh_interval ?? 10);
+    if (interval > 0) {
+      this._refreshIntervalId = setInterval(() => this._refreshImage(), interval * 1_000);
+    }
   }
 
   disconnectedCallback() {
-    clearInterval(this._intervalId);
-    this._intervalId = null;
+    clearInterval(this._ageIntervalId);
+    clearInterval(this._refreshIntervalId);
+    this._ageIntervalId = null;
+    this._refreshIntervalId = null;
+    if (this._unsubscribeCamera) {
+      this._unsubscribeCamera();
+      this._unsubscribeCamera = null;
+    }
+  }
+
+  _subscribeCamera() {
+    if (!this._hass?.connection) return;
+    this._hass.connection
+      .subscribeEvents((event) => {
+        if (event.data?.entity_id === this._config.camera_entity) {
+          this._refreshImage();
+          this._updateAge();
+        }
+      }, "state_changed")
+      .then((unsub) => {
+        this._unsubscribeCamera = unsub;
+      })
+      .catch(() => {
+        // Subscription unavailable — polling fallback still active.
+      });
   }
 
   _render() {
@@ -116,6 +175,7 @@ class SmartFarmViewSnapshotCard extends HTMLElement {
     return `/api/camera_proxy/${this._config.camera_entity}?token=${token}`;
   }
 
+  /** Initial render — uses last_updated as cache key so we don't re-fetch unnecessarily. */
   _updateImage() {
     if (!this._rendered) return;
     const url = this._imageUrl();
@@ -126,13 +186,25 @@ class SmartFarmViewSnapshotCard extends HTMLElement {
       wrap.querySelector("img")?.remove();
       return;
     }
-    // Cache-bust using entity last_updated so the browser refetches on new captures
     const entity = this._cameraEntity();
     const bust = entity?.last_updated
       ? new Date(entity.last_updated).getTime()
       : Date.now();
-    const src = `${url}&_t=${bust}`;
+    this._setImageSrc(wrap, placeholder, url, bust);
+  }
 
+  /** Force-fetch latest image — always uses Date.now() so the browser bypasses its cache. */
+  _refreshImage() {
+    if (!this._rendered) return;
+    const url = this._imageUrl();
+    if (!url) return;
+    const wrap = this.shadowRoot.getElementById("image-wrap");
+    const placeholder = this.shadowRoot.getElementById("placeholder");
+    this._setImageSrc(wrap, placeholder, url, Date.now());
+  }
+
+  _setImageSrc(wrap, placeholder, baseUrl, bust) {
+    const src = `${baseUrl}&_t=${bust}`;
     let img = wrap.querySelector("img");
     if (!img) {
       placeholder.style.display = "none";
@@ -173,7 +245,6 @@ class SmartFarmViewSnapshotCard extends HTMLElement {
         entity_id: this._config.button_entity,
       });
     } finally {
-      // Re-enable after 5s — the Pi needs time to capture and publish
       setTimeout(() => {
         btn.disabled = false;
         btn.textContent = "Capture";
