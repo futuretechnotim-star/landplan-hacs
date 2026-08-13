@@ -71,6 +71,15 @@ class TestExtraStateAttributes:
         entity = LandPlanNodeTracker(coordinator, CAMERA_NODE)
         assert entity.extra_state_attributes["object_type"] == "point"
 
+    def test_normalizes_tag_relation_object_shape(self, coordinator):
+        obj = {
+            **CAMERA_NODE,
+            "tags": [{"id": "rel-1", "tagId": "t-1", "tag": {"name": "camera-node"}}],
+        }
+        coordinator.data = LandPlanData(map_objects=[obj])
+        entity = LandPlanNodeTracker(coordinator, obj)
+        assert entity.extra_state_attributes["tags"] == ["camera-node"]
+
 
 class TestLiveUpdate:
     def test_picks_up_updated_coordinates_from_coordinator(self, coordinator):

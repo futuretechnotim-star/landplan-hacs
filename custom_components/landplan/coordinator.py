@@ -21,6 +21,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .api import LandPlanApiClient, LandPlanApiError, LandPlanAuthError
 from .const import CONF_PLAN_ID, CONF_TOKEN, DEVICE_TAGS, DOMAIN, SLOW_UPDATE_INTERVAL
+from .helpers import tag_names
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -35,10 +36,7 @@ class LandPlanData:
     @property
     def device_nodes(self) -> list[dict[str, Any]]:
         """Map objects tagged as physical devices (camera-node / mesh-node / robot)."""
-        return [
-            obj for obj in self.map_objects
-            if DEVICE_TAGS.intersection(obj.get("tags") or [])
-        ]
+        return [obj for obj in self.map_objects if DEVICE_TAGS & tag_names(obj)]
 
 
 class LandPlanCoordinator(DataUpdateCoordinator[LandPlanData]):

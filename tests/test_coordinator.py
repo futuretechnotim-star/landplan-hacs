@@ -83,3 +83,22 @@ class TestDeviceNodes:
     def test_handles_objects_with_no_tags_field(self):
         data = LandPlanData(map_objects=[{"id": "obj-1", "label": "Trail"}])
         assert data.device_nodes == []
+
+    def test_handles_tag_relation_object_shape(self):
+        """Regression test: the LandPlan API now returns tags as relation
+        objects ({"tag": {"name": ...}, ...}), not plain strings — this used
+        to crash device_nodes with `TypeError: unhashable type: 'dict'`."""
+        data = LandPlanData(map_objects=[
+            {
+                "id": "obj-1",
+                "label": "Cam 1",
+                "tags": [{"id": "rel-1", "tagId": "t-1", "tag": {"name": "camera-node"}}],
+            },
+            {
+                "id": "obj-2",
+                "label": "Cleanup site",
+                "tags": [{"id": "rel-2", "tagId": "t-2", "tag": {"name": "cleanup"}}],
+            },
+        ])
+        nodes = data.device_nodes
+        assert {n["id"] for n in nodes} == {"obj-1"}

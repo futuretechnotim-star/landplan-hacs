@@ -16,7 +16,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .coordinator import LandPlanCoordinator
-from .helpers import remove_stale_entities
+from .helpers import remove_stale_entities, tag_names
 
 
 async def async_setup_entry(
@@ -70,6 +70,6 @@ class LandPlanNodeTracker(CoordinatorEntity[LandPlanCoordinator], TrackerEntity)
     def extra_state_attributes(self) -> dict[str, Any]:
         obj = self._current_obj() or {}
         return {
-            "tags": obj.get("tags", []),
+            "tags": sorted(tag_names(obj)),
             "object_type": obj.get("objectType"),
         }
