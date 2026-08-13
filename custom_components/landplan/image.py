@@ -43,6 +43,10 @@ class LandPlanPhotoImage(CoordinatorEntity[LandPlanCoordinator], ImageEntity):
 
     def __init__(self, coordinator: LandPlanCoordinator, obj: dict[str, Any]) -> None:
         super().__init__(coordinator)
+        # CoordinatorEntity.__init__ does not chain to ImageEntity.__init__ (MRO
+        # stops there), so access_tokens is never set up without this explicit
+        # call — every state read then raises AttributeError.
+        ImageEntity.__init__(self, coordinator.hass)
         self._obj = obj
         self._attr_unique_id = f"{coordinator._plan_id}_{obj['id']}_image"
         self._attr_name = obj.get("label", obj["id"])

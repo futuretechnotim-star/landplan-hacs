@@ -113,3 +113,12 @@ class TestMetadata:
     def test_name_from_label(self, coordinator):
         entity = LandPlanPhotoImage(coordinator, PHOTO_POINT)
         assert entity.name == "North Gate Photo"
+
+
+class TestImageEntityInit:
+    def test_access_tokens_initialised(self, coordinator):
+        """Regression test: ImageEntity.__init__ must run alongside
+        CoordinatorEntity.__init__, or access_tokens is never set and every
+        state read raises AttributeError."""
+        entity = LandPlanPhotoImage(coordinator, PHOTO_POINT)
+        assert len(entity.access_tokens) > 0
